@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Projeto 1 · Laboratório de Ciência de Dados</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('project1.plotly_asset') }}"></script>
+</head>
+<body>
+<header><div class="container"><span class="eyebrow">UFAPE · Laboratório de Ciência de Dados · 2026.2</span>
+  <h1>O jogo além do placar</h1>
+  <p>Projeto 1 — análise descritiva e qualidade dos dados de times da NBA.</p>
+  <p>Uma observação representa <strong>um time em uma partida</strong>. Dois registros podem
+    pertencer ao mesmo jogo; não são duas partidas independentes.</p>
+</div></header>
+<nav aria-label="Seções"><div class="container">
+  <a href="#base">Base e dicionário</a><a href="#qualidade">Qualidade</a>
+  <a href="#descritiva">Estatísticas</a><a href="#graficos">Gráficos</a>
+  <a href="#sintese">Síntese</a><a href="#metodos">Métodos</a><a href="#futuro">Próximas etapas</a>
+</div></nav>
+<main class="container">
+<section class="filters" aria-labelledby="filtros">
+  <h2 id="filtros">Explore os times da equipe</h2>
+  <p>Escolha um ou mais times. A análise estatística e os gráficos usam esse recorte;
+    o diagnóstico de qualidade cobre os dois times do grupo:
+    Los Angeles Clippers e Miami Heat. Ambos estão selecionados inicialmente.</p>
+  <form method="get" action="{{ url_for('project1.report') }}">
+    <fieldset><legend>Times</legend><div class="team-grid">
+      {% for team in available %}<label><input type="checkbox" name="time" value="{{ team }}"
+        {% if team in teams %}checked{% endif %}> {{ team }}</label>{% endfor %}
+    </div></fieldset>
+    <div class="controls"><label>Variável<select name="variavel">{% for value, label in variables.items() %}
+      <option value="{{ value }}" {% if variable == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label>Comparação nas barras<select name="medida">{% for value in metrics %}
+      <option {% if metric == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    <button type="submit">Atualizar relatório</button></div>
+  </form>
+</section>
+<section id="base"><span class="eyebrow">01 · Conhecer a base</span><h2>Origem, dimensão e significado</h2>
+  <div class="cards"><article><strong>{{ data.raw.shape[0] }}</strong>registros do grupo na origem</article>
+    <article><strong>{{ data.raw.shape[1] }}</strong>colunas na origem</article>
+    <article><strong>{{ available|length }}</strong>times disponíveis</article>
+    <article><strong>{{ frame.shape[0] }}</strong>registros selecionados</article></div>
+  <p>Fonte: <code>{{ data.path.name }}</code>, {{ '%.2f'|format(data.path.stat().st_size / 1024) }} KiB.
+    O arquivo original é preservado; somente os registros dos dois times do grupo são analisados.
+    Período observado no grupo: {{ data.clean.data_jogo.min().strftime('%d/%m/%Y') }} a
+    {{ data.clean.data_jogo.max().strftime('%d/%m/%Y') }}.
+    A base é um recorte; não pressupomos temporada completa nem identificação da liga por metadados externos.</p>
+  <p>Datas seriais do Excel são convertidas com origem em 30/12/1899; datas já reconhecidas são
+    preservadas. W, L e demais contagens são convertidas em números, sem codificação ordinal
+    arbitrária. WL admite W/L ou 1/0. Identificadores são texto, evitando tratá-los como grandezas.</p>
+  <details><summary>Dicionário completo e nomes intuitivos das 28 colunas</summary>
+    <div class="table-wrap">{{ tables.dictionary }}</div></details>
+</section>
+<section id="qualidade"><span class="eyebrow">02 · Qualidade e preparação</span><h2>Problemas verificáveis e decisões explícitas</h2>
+  <p><strong>{{ source_missing }}</strong> células ausentes na origem;
+    <strong>{{ clean_missing }}</strong> após tratamento.
+    <strong>{{ data.duplicates }}</strong> linhas integralmente duplicadas e
+    <strong>{{ data.duplicate_keys }}</strong> repetições além da primeira na chave time + jogo.
+    Registros duplicados são sinalizados e mantidos para revisão; na base atual, a contagem informa
+    se isso afeta os resultados.</p>
+  <p>Zero é válido em contagens como bloqueios e roubos; não o confundimos com ausência. Negativos,
+    infinitos, contagens fracionárias e WL fora de 0/1 são inválidos. Cestas maiores que tentativas,
+    REB diferente de OREB + DREB e pontos diferentes de 2 × FGM + FG3M + FTM são sinalizados.
+    Divergências aritméticas são mantidas, pois a checagem não identifica qual campo está errado.</p>
+  <p>As taxas da fonte misturam escalas. Recalculamos W_PCT, FG_PCT, FG3_PCT e FT_PCT pelas contagens,
+    em frações entre 0 e 1. A auditoria considera divergência acima de 0,00051 para admitir arredondamento
+    a três casas. Denominador zero gera ausência, nunca zero artificial. Não imputamos nem removemos
+    outliers automaticamente. Cada estatística ignora apenas valores ausentes da própria variável.</p>
+  <div class="table-wrap">{{ tables.changes }}</div>
+  <details><summary>Auditoria de tipos, ausências, zeros, negativos e inconsistências por coluna</summary>
+    <p>Escopo: registros dos dois times do grupo. Contagens de problemas podem se sobrepor;
+      não devem ser somadas como registros distintos.</p>
+    <div class="table-wrap">{{ tables.quality }}</div></details>
+  <h3>Ausência de dados: MCAR, MAR e MNAR</h3>
+  <p><strong>MCAR:</strong> a ausência independe dos dados observados e não observados.
+    <strong>MAR:</strong> após condicionar às variáveis observadas, não depende do valor ausente.
+    <strong>MNAR:</strong> ainda depende de informações não observadas, inclusive do próprio valor faltante.
+    Não é possível distinguir MAR de MNAR apenas pela planilha; contexto de coleta e análise de sensibilidade são necessários.</p>
+  {% if source_missing == 0 %}<p class="notice">Não há ausências na fonte. Os testes de mecanismo
+    de missingness não se aplicam: não existe variação no indicador de ausência. Isso não prova MCAR
+    no processo de coleta e não exclui jogos ausentes por inteiro.</p>{% else %}
+    <p class="notice">Há ausências. O relatório quantifica o problema; os testes de mecanismo abaixo
+      são discussão metodológica, não foram executados. Investigue os padrões antes de decidir imputação.</p>{% endif %}
+  <ul>
+    <li><strong>Little:</strong> teste conjunto de igualdade de médias entre padrões de ausência, com
+      referência qui-quadrado, usualmente sob normalidade multivariada e estimação via EM. Usar para
+      investigar MCAR quando houver padrões com tamanho suficiente; rejeitar MCAR não identifica MAR ou MNAR.</li>
+    <li><strong>Jamshidian–Jalal:</strong> compara covariâncias entre padrões de ausência com procedimentos
+      de imputação e testes de homocedasticidade, incluindo alternativa sem normalidade. Útil quando
+      Little é inadequado; pressupostos e número de casos por padrão precisam ser verificados.</li>
+    <li><strong>Listing–Schlittgen (LS):</strong> abordagem para dados longitudinais com ausência monotônica,
+      comparando distribuições de medidas observadas entre grupos que abandonam em momentos diferentes.
+      A tabela de jogos não é automaticamente um estudo de abandono longitudinal; não aplicar sem construir
+      esse desenho e verificar a versão paramétrica/não paramétrica do teste.</li>
+    <li><strong>Regressão logística de Fairclough:</strong> modela o indicador de ausência com resultados
+      anteriores e covariáveis observadas. Associação com observados dá evidência contra MCAR; ausência de
+      associação não confirma MCAR. Identificar MNAR requer informação adicional sobre não respondentes;
+      não basta ajustar uma regressão nesta base.</li>
+  </ul>
+  <h3>Outliers por coluna numérica e por time</h3>
+  <p>Todos os métodos são univariados no interior de cada time, com os parâmetros fixados em Métodos.
+    Identificadores, datas, texto e a variável binária WL não recebem detectores quantitativos.
+    Zero em Grubbs com situação “não aplicado” não significa teste negativo. São candidatos à revisão,
+    e não erros confirmados. O relatório não usa modelos preditivos de alta dimensionalidade.</p>
+  <details><summary>Contagens dos sete critérios e diagnóstico de Grubbs</summary>
+    <div class="table-wrap">{{ tables.counts }}</div></details>
+  <details><summary>Quais jogos foram sinalizados em {{ variables[variable] }}</summary>
+    <p>Uma linha por método e jogo. O mesmo jogo pode aparecer várias vezes; a linha Excel permite conferir a fonte.</p>
+    <div class="table-wrap">{{ tables.records }}</div></details>
+</section>
+<section id="descritiva"><span class="eyebrow">03 · Estatística descritiva</span><h2>Centro, dispersão e forma das distribuições</h2>
+  <p>Resultados dos times selecionados para todas as sete variáveis. Duas casas decimais;
+    contagens por jogo, pontos por jogo, variância em unidade², CV em % e assimetria adimensional.
+    N/A representa medida indefinida. Todas as modas com repetição são apresentadas.</p>
+  <div class="table-wrap">{{ tables.stats }}</div>
+  <h3>Coeficiente de variação (%)</h3><div class="table-wrap">{{ tables.cv }}</div>
+  <p>CV = 100 × s / média, com s amostral (n − 1). As sete variáveis são contagens em escala
+    de razão e têm zero significativo. Média zero invalida o CV; média abaixo de 5 é nosso alerta
+    operacional de cautela, especialmente para BLK e STL. CV maior significa menor regularidade relativa,
+    sem um limiar universal de “bom” desempenho. Diferentemente do DP bruto, é adimensional e permite
+    comparar escalas. IQR/mediana é uma alternativa robusta de dispersão relativa, mas não é um CV equivalente.</p>
+  <h3>Quartis, faixa central e amplitude</h3><div class="table-wrap">{{ tables.quartiles }}</div>
+  <h3>Quadro de IQR por variável e time</h3><div class="table-wrap">{{ tables.iqr }}</div>
+  <p>Quartis usam interpolação linear (pandas/NumPy, tipo 7). IQR = Q3 − Q1; limites de Tukey:
+    Q1 − 1,5 × IQR e Q3 + 1,5 × IQR. Os bigodes terminam nas observações extremas dentro dos limites,
+    enquanto os limites teóricos aparecem como marcadores. Tabela, listagem de extremos e boxplot usam
+    os mesmos valores e a mesma desigualdade estrita; não há divergência de regra.</p>
+</section>
+<section id="graficos"><span class="eyebrow">04 · Exploração visual</span><h2>{{ variables[variable] }} em perspectiva</h2>
+  <p>Use a legenda para ocultar séries e passe o cursor para ver valores. A barra de ferramentas permite ampliar e salvar imagens.</p>
+  <div class="chart">{{ box }}</div>
+  <p>Média, mediana, todas as modas, Q1, Q3, limites teóricos e extremos superiores/inferiores
+    estão identificados na legenda. Se não houver repetição, não desenhamos uma moda artificial.</p>
+  <div class="chart">{{ hist }}</div>
+  <p>O histograma está em densidade para ser comparável à KDE, que usa a largura de banda de Scott.
+    KDE é uma suavização de contagens discretas e pode sugerir valores não inteiros e efeitos de borda.
+    Compare a cauda mais longa e a posição da mediana no boxplot com a direção indicada pelo coeficiente.
+    Diferenças visuais podem surgir pelo número de classes, suavização, empates e amostra pequena;
+    a curva não constitui um teste de normalidade.</p>
+  <div class="chart">{{ bars }}</div>
+  <p>No modo “z médio”, cada média é centralizada pela média de todas as observações selecionadas e
+    dividida pelo DP amostral desse conjunto: (média do time − média conjunta) / s conjunto.
+    A referência é ponderada pelo número de jogos; os valores mudam com o recorte. Isso compara posição,
+    não regularidade. Se s = 0, convencionamos z = 0. Não padronizamos cada time antes de comparar suas médias,
+    o que produziria médias zero e apagaria as diferenças.</p>
+</section>
+<section id="sintese"><span class="eyebrow">05 · Interpretação crítica</span><h2>O que os resultados permitem afirmar</h2>
+  {% for text in interpretations %}<p>{{ text }}</p>{% endfor %}
+  <h3>Comparação entre variáveis</h3><ul>{% for text in highlights %}<li>{{ text }}</li>{% endfor %}</ul>
+  <p>Compare os quadros CV e IQR para verificar se a classificação dos times se mantém entre variáveis;
+    consistência em pontuação não implica consistência em bloqueios. O IQR bruto compara times dentro
+    da mesma variável; comparar IQR de pontos e de roubos sem normalização mistura escalas.
+    Amplitude muito maior que IQR indica caudas longas, mas não prova erro. O DP sem extremos é uma
+    análise de sensibilidade: ao retirar caudas ele tende a cair, não é uma estimativa “corrigida” da população.</p>
+  <p>O coeficiente ajustado de Fisher–Pearson é calculado com <code>scipy.stats.skew(bias=False)</code>:
+    G1 = √[n(n−1)]/(n−2) × m3/m2^(3/2), com mk = Σ(x−média)^k/n. A correção reduz o viés
+    amostral e favorece comparações entre times com quantidades distintas de jogos. Sinal positivo:
+    cauda à direita; negativo: à esquerda. Intensidade: |G1| &lt; 0,5 aproximadamente simétrica;
+    0,5 ≤ |G1| &lt; 1 moderada; |G1| ≥ 1 forte. Constantes ou n &lt; 3 não têm coeficiente definido.</p>
+  <p>Esses resultados descrevem o recorte observado. Jogos do mesmo time têm dependência temporal e
+    os dois lados de uma partida são relacionados; não inferimos causalidade, significância entre times
+    ou desempenho futuro. Extremos podem ser jogos legítimos com prorrogação, adversários específicos ou estilos distintos.</p>
+</section>
+<section id="metodos"><span class="eyebrow">06 · Métodos e reprodutibilidade</span><h2>Como as anomalias são calculadas</h2>
+  <ul>
+    <li><strong>IQR:</strong> x &lt; Q1 − 1,5 IQR ou x &gt; Q3 + 1,5 IQR; robusto a extremos, mas pode sinalizar
+      muitos valores em contagens concentradas. IQR zero exige leitura contextual.</li>
+    <li><strong>Z-score:</strong> |(x − média)/s| &gt; 3, s amostral. Média e DP são sensíveis aos próprios extremos;
+      não interpretar o limiar como probabilidade normal em distribuições assimétricas.</li>
+    <li><strong>Grubbs:</strong> G = max|x − média|/s; bilateral α = 0,05; t = t(1 − α/(2n), n − 2);
+      G crítico = (n−1)/√n × √[t²/(n−2+t²)]. Uma aplicação por coluna e time, buscando um único extremo.
+      Aplicado apenas com n ≥ 3, variância positiva e Shapiro–Wilk p ≥ 0,05. Não rejeitar Shapiro não prova normalidade;
+      contagens discretas e múltiplas comparações limitam a interpretação. Não há correção global entre colunas.</li>
+    <li><strong>ECOD:</strong> implementação PyOD. Usa distribuições empíricas das caudas esquerda e direita,
+      combina −log das probabilidades e ajusta pela assimetria. Scores acima do percentil 95 são sinalizados
+      (contamination=0,05); empates podem produzir menos de 5% de candidatos.</li>
+    <li><strong>K-NN:</strong> distância euclidiana ao quinto vizinho, excluindo a própria observação;
+      k = min(5,n−1). Sinaliza distância estritamente acima do percentil 95. O corte é exploratório,
+      não um teste estatístico.</li>
+    <li><strong>DBSCAN:</strong> eps = 0,5, min_samples = 5; pontos sem grupo denso recebem rótulo −1.
+      Não pressupõe uma fração de anomalias; resultado depende fortemente de escala e densidade.</li>
+    <li><strong>LOF:</strong> compara densidade local à dos vizinhos, contamination=0,05, com scikit-learn.
+      k = min(max(20, maior frequência de um valor), n−1), incluindo um valor diferente quando há muitos
+      empates para evitar densidades degeneradas. O k efetivo aparece na auditoria. Baixa densidade relativa
+      gera scores mais anômalos; empates e k alteram a marcação.</li>
+  </ul>
+  <p>ECOD, K-NN, DBSCAN e LOF recebem cada coluna padronizada com StandardScaler (DP populacional,
+    convenção da biblioteca para escalonamento, sem alterar as medidas descritivas amostrais).
+    Não se misturam times ou dimensões. Colunas constantes e amostras com menos de três valores
+    não recebem detecção. Ausentes não participam do ajuste. A discordância entre métodos é esperada:
+    cada um define “raro” de forma diferente. Os limiares são decisões do grupo para exploração,
+    a serem calibradas antes de uso operacional.</p>
+  <h3>Referências para aprofundar</h3>
+  <ul>
+    <li><a href="https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h1.htm">NIST — teste de Grubbs</a></li>
+    <li><a href="https://arxiv.org/abs/2201.00382">Li et al. — ECOD (2022)</a> e
+      <a href="https://pyod.readthedocs.io/en/latest/_modules/pyod/models/ecod.html">implementação PyOD</a></li>
+    <li><a href="https://scikit-learn.org/stable/modules/outlier_detection.html">scikit-learn — detecção de anomalias</a></li>
+    <li><a href="https://doi.org/10.1080/01621459.1988.10478722">Little (1988) — teste de MCAR</a></li>
+    <li><a href="https://pubmed.ncbi.nlm.nih.gov/21720450/">Jamshidian e Jalal (2010)</a></li>
+    <li><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC2711047/">Estudo metodológico sobre Little, LS e Fairclough</a></li>
+  </ul>
+</section>
+<section id="futuro"><span class="eyebrow">07 · Integração com os próximos projetos</span><h2>Preparação para modelos e colaboração</h2>
+  <p>O relatório mantém identificadores e metadados para rastreabilidade. A matriz de atributos exportada,
+    separada do relatório, adota o cenário explícito de prever pontos <em>antes</em> de uma partida.
+    Inclui {{ features|join(', ') }}; exclui IDs, texto livre, nome do time redundante e todas as estatísticas
+    da partida atual, incluindo W/L acumulados que incorporam seu resultado. Não se afirma que uma coluna
+    seja inútil para todos os modelos: lags, adversário e codificações poderão ser adicionados em etapas futuras.</p>
+  <p>A data completa serve para ordenação e cortes temporais; dia da semana e mês são derivados.
+    Treinar e avaliar por cortes de tempo, construindo lags somente com passado, evita vazamento de informação.
+    Nenhum modelo preditivo é treinado neste projeto.</p>
+  <div class="downloads">{% for kind, label in [('dados','Dados tratados'),('estatisticas','Estatísticas'),
+      ('outliers','Outliers detalhados'),('contagens','Contagens dos detectores'),
+      ('qualidade','Auditoria da base'),('atributos','Atributos para etapa futura')] %}
+    <a href="{{ url_for('project1.export', kind=kind) }}?{{ request.query_string.decode('utf-8') }}">{{ label }} ↓ CSV</a>
+  {% endfor %}</div>
+</section>
+</main><footer class="container">Relatório reproduzível · Código e decisões metodológicas documentados no README e em docs/.</footer>
+</body></html>
